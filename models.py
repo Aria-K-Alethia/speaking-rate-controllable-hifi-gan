@@ -1,9 +1,11 @@
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+import torchaudio
 from torch.nn import Conv1d, ConvTranspose1d, AvgPool1d, Conv2d
 from torch.nn.utils import weight_norm, remove_weight_norm, spectral_norm
 from utils import init_weights, get_padding
+from functools import partial
 
 LRELU_SLOPE = 0.1
 
@@ -96,8 +98,38 @@ class Generator(torch.nn.Module):
         self.conv_post = weight_norm(Conv1d(ch, 1, 7, 1, padding=3))
         self.ups.apply(init_weights)
         self.conv_post.apply(init_weights)
+        self.upsampling_layer = -1
+        self.resample = None
+        
 
+    def set_resample(self, sf, tf, layer, method, funct=False):
+        if method == 'sinc':
+            method = 'sinc_interpolation'
+        elif method == 'kaiser':
+            method = 'kaiser_window'
+        if funct:
+            self.resample = partial(torchaudio.functional.resample,
+                    orig_freq=sf, new_freq=tf,
+                    resampling_method=method)
+        else:
+            self.resample = torchaudio.transforms.Resample(
+                                sf, tf,
+                                resampling_method=method)
+        
+        self.upsampling_layer = layer
+    
+    def set_interpolate(self, factor, layer, method):
+        mode = method
+        self.resample = partial(F.interpolate, scale_factor=(1/factor), mode=mode)
+        self.upsampling_layer = layer
+    
+    def resampling(self, x):
+        x = self.resample(x)
+        return x
+    
     def forward(self, x):
+        if self.upsampling_layer == 0:
+            x = self.resampling(x)
         x = self.conv_pre(x)
         for i in range(self.num_upsamples):
             x = F.leaky_relu(x, LRELU_SLOPE)
@@ -109,10 +141,13 @@ class Generator(torch.nn.Module):
                 else:
                     xs += self.resblocks[i*self.num_kernels+j](x)
             x = xs / self.num_kernels
+            if self.upsampling_layer == (i + 1):
+                x = self.resampling(x)
         x = F.leaky_relu(x)
         x = self.conv_post(x)
         x = torch.tanh(x)
-
+        if self.upsampling_layer == 5:
+            x = self.resampling(x)
         return x
 
     def remove_weight_norm(self):

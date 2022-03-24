@@ -6,6 +6,10 @@ from torch.nn.utils import weight_norm
 matplotlib.use("Agg")
 import matplotlib.pylab as plt
 
+def get_freq_from_factor(f):
+    sf = 1000
+    tf = int(1/f * 1000)
+    return sf, tf
 
 def plot_spectrogram(spectrogram):
     fig, ax = plt.subplots(figsize=(10, 2))
